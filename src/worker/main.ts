@@ -57,21 +57,24 @@ async function main() {
   log.info('pg-boss started');
 
   // Register job handler
+  // Note: pg-boss v10 passes an array of jobs to the handler
   await boss.work<ProcessPostJob>(
     PROCESS_POST_QUEUE,
     { teamSize: 5, teamConcurrency: 2 },
-    async (job) => {
-      const { fbPostId, correlationId } = job.data;
-      const jobLog = logger.child({ correlationId, jobId: job.id, fbPostId });
+    async (jobs) => {
+      for (const job of jobs) {
+        const { fbPostId, correlationId } = job.data;
+        const jobLog = logger.child({ correlationId, jobId: job.id, fbPostId });
 
-      jobLog.info('Processing post job');
+        jobLog.info('Processing post job');
 
-      try {
-        await processPost(fbPostId, jobLog);
-        jobLog.info('Post processed successfully');
-      } catch (err) {
-        jobLog.error({ error: err }, 'Failed to process post');
-        throw err; // Let pg-boss handle retry
+        try {
+          await processPost(fbPostId, jobLog);
+          jobLog.info('Post processed successfully');
+        } catch (err) {
+          jobLog.error({ error: err }, 'Failed to process post');
+          throw err; // Let pg-boss handle retry
+        }
       }
     }
   );
