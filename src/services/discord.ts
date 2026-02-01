@@ -47,14 +47,12 @@ export function buildEmbed(post: FacebookPost): DiscordEmbed {
     title: '📈 TRADE ALERT',
     description: message,
     color: 0x1877f2, // Facebook blue
-    footer: {
-      text: `fb_post_id: ${post.id}`,
-    },
   };
 
-  // Add permalink if available
+  // Add permalink - makes title clickable
   if (post.permalink_url) {
     embed.url = post.permalink_url;
+    embed.footer = { text: '🔗 Click title to view on Facebook' };
   }
 
   // Add timestamp if available
