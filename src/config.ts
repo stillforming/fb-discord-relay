@@ -23,6 +23,7 @@ const envSchema = z.object({
     .transform((v) => v === 'true')
     .default('true'),
   DISCORD_DISCLAIMER: z.string().default('Not financial advice. Do your own research.'),
+  DISCORD_MENTION_ROLE_ID: z.string().optional(),
 
   // Application
   ALERTS_ENABLED: z

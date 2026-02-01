@@ -110,7 +110,7 @@ export async function transitionPost(
       events: {
         create: {
           event: `status_${toStatus}`,
-          details: eventDetails ?? {},
+          details: (eventDetails ?? {}) as Record<string, unknown> & object,
         },
       },
     },

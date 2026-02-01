@@ -24,6 +24,7 @@ export interface DiscordWebhookPayload {
   embeds?: DiscordEmbed[];
   allowed_mentions?: {
     parse: string[];
+    roles?: string[];
   };
 }
 
@@ -80,16 +81,29 @@ export function buildEmbed(post: FacebookPost): DiscordEmbed {
 export async function sendToDiscord(post: FacebookPost): Promise<SendResult> {
   const embed = buildEmbed(post);
 
+  // Build content with optional role mention and disclaimer
+  const contentParts: string[] = [];
+  
+  // Add role mention if configured
+  if (config.DISCORD_MENTION_ROLE_ID) {
+    contentParts.push(`<@&${config.DISCORD_MENTION_ROLE_ID}>`);
+  }
+  
+  // Add disclaimer
+  if (config.DISCORD_DISCLAIMER) {
+    contentParts.push(`*${config.DISCORD_DISCLAIMER}*`);
+  }
+
   const payload: DiscordWebhookPayload = {
     embeds: [embed],
     allowed_mentions: {
-      parse: [], // Don't ping anyone
+      parse: [], // Don't parse @everyone/@here
+      roles: config.DISCORD_MENTION_ROLE_ID ? [config.DISCORD_MENTION_ROLE_ID] : [],
     },
   };
 
-  // Add disclaimer as separate content
-  if (config.DISCORD_DISCLAIMER) {
-    payload.content = `*${config.DISCORD_DISCLAIMER}*`;
+  if (contentParts.length > 0) {
+    payload.content = contentParts.join('\n');
   }
 
   // Build URL with wait parameter for message ID
@@ -142,7 +156,7 @@ export async function sendToDiscord(post: FacebookPost): Promise<SendResult> {
     let messageId: string | undefined;
     if (config.DISCORD_WEBHOOK_WAIT) {
       try {
-        const data = await response.json();
+        const data = await response.json() as { id?: string };
         messageId = data.id;
       } catch {
         // Response might be empty
@@ -192,7 +206,7 @@ export async function testWebhook(): Promise<boolean> {
       return false;
     }
 
-    const data = await response.json();
+    const data = await response.json() as { name?: string; channel_id?: string };
     log.info({ name: data.name, channelId: data.channel_id }, 'Discord webhook verified');
     return true;
   } catch (err) {

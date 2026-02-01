@@ -1,6 +1,6 @@
 import { config } from '../../config.js';
 import type { Logger } from '../../logger.js';
-import { fetchPost } from '../../services/facebook.js';
+import { fetchPost, type FacebookPost } from '../../services/facebook.js';
 import { sendToDiscord } from '../../services/discord.js';
 import {
   transitionPost,
@@ -11,6 +11,12 @@ import {
 } from '../../services/post-state.js';
 import { hasTag } from '../../utils/tag-parser.js';
 
+interface WebhookData {
+  message?: string;
+  from?: { id: string; name: string };
+  createdTime?: number;
+}
+
 /**
  * Process a Facebook post through the delivery pipeline
  * 
@@ -19,7 +25,7 @@ import { hasTag } from '../../utils/tag-parser.js';
  *                      ↘ ignored (no tag)
  *                               ↘ failed / needs_review
  */
-export async function processPost(fbPostId: string, log: Logger): Promise<void> {
+export async function processPost(fbPostId: string, log: Logger, webhookData?: WebhookData): Promise<void> {
   const startTime = Date.now();
 
   // Get current post state
@@ -30,7 +36,7 @@ export async function processPost(fbPostId: string, log: Logger): Promise<void> 
   }
 
   // Skip if already in terminal state
-  if ([PostStatus.delivered, PostStatus.ignored].includes(post.status)) {
+  if (post.status === PostStatus.delivered || post.status === PostStatus.ignored) {
     log.debug({ fbPostId, status: post.status }, 'Post already in terminal state');
     return;
   }
@@ -47,21 +53,37 @@ export async function processPost(fbPostId: string, log: Logger): Promise<void> 
 
   const fetchResult = await fetchPost(fbPostId);
 
+  let fbPost: FacebookPost;
+
   if (!fetchResult.success) {
-    log.warn({ fbPostId, error: fetchResult.error }, 'Failed to fetch post');
+    log.warn({ fbPostId, error: fetchResult.error }, 'Failed to fetch post from Graph API');
 
-    if (fetchResult.retryable) {
-      await markForRetry(fbPostId, fetchResult.error || 'Fetch failed');
-      throw new Error(`Retryable fetch error: ${fetchResult.error}`);
+    // If we have webhook data, use it as fallback (useful for testing and resilience)
+    if (webhookData?.message) {
+      log.info({ fbPostId }, 'Using webhook data as fallback');
+      fbPost = {
+        id: fbPostId,
+        message: webhookData.message,
+        from: webhookData.from,
+        created_time: webhookData.createdTime 
+          ? new Date(webhookData.createdTime * 1000).toISOString() 
+          : undefined,
+      };
+    } else {
+      // No fallback available
+      if (fetchResult.retryable) {
+        await markForRetry(fbPostId, fetchResult.error || 'Fetch failed');
+        throw new Error(`Retryable fetch error: ${fetchResult.error}`);
+      }
+
+      await transitionPost(fbPostId, PostStatus.failed, {
+        lastError: fetchResult.error,
+      });
+      return;
     }
-
-    await transitionPost(fbPostId, PostStatus.failed, {
-      lastError: fetchResult.error,
-    });
-    return;
+  } else {
+    fbPost = fetchResult.post!;
   }
-
-  const fbPost = fetchResult.post!;
 
   // Update post with fetched data
   await prisma.post.update({

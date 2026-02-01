@@ -11,9 +11,16 @@ const log = logger.child({ component: 'worker' });
 // Queue name (must match ingress)
 const PROCESS_POST_QUEUE = 'process-post';
 
+interface WebhookData {
+  message?: string;
+  from?: { id: string; name: string };
+  createdTime?: number;
+}
+
 interface ProcessPostJob {
   fbPostId: string;
   correlationId: string;
+  webhookData?: WebhookData;
 }
 
 async function main() {
@@ -60,16 +67,16 @@ async function main() {
   // Note: pg-boss v10 passes an array of jobs to the handler
   await boss.work<ProcessPostJob>(
     PROCESS_POST_QUEUE,
-    { teamSize: 5, teamConcurrency: 2 },
+    { batchSize: 5 },
     async (jobs) => {
       for (const job of jobs) {
-        const { fbPostId, correlationId } = job.data;
+        const { fbPostId, correlationId, webhookData } = job.data;
         const jobLog = logger.child({ correlationId, jobId: job.id, fbPostId });
 
         jobLog.info('Processing post job');
 
         try {
-          await processPost(fbPostId, jobLog);
+          await processPost(fbPostId, jobLog, webhookData);
           jobLog.info('Post processed successfully');
         } catch (err) {
           jobLog.error({ error: err }, 'Failed to process post');

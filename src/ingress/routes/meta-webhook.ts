@@ -28,6 +28,7 @@ interface WebhookEntry {
       item?: string;
       published?: number;
       message?: string;
+      created_time?: number;
       from?: { id: string; name: string };
     };
   }>;
@@ -109,8 +110,14 @@ export async function metaWebhookRoutes(app: FastifyInstance) {
       return reply.status(200).send('OK');
     }
 
-    // Process entries
-    const postIds: string[] = [];
+    // Process entries - collect posts with their webhook data
+    interface PostData {
+      postId: string;
+      message?: string;
+      from?: { id: string; name: string };
+      createdTime?: number;
+    }
+    const posts: PostData[] = [];
 
     for (const entry of body.entry) {
       if (!entry.changes) continue;
@@ -133,25 +140,35 @@ export async function metaWebhookRoutes(app: FastifyInstance) {
           continue;
         }
 
-        postIds.push(value.post_id);
+        posts.push({
+          postId: value.post_id,
+          message: value.message,
+          from: value.from,
+          createdTime: value.created_time as number | undefined,
+        });
       }
     }
 
     // Enqueue jobs for each post (deduplicated by post_id)
-    for (const postId of postIds) {
+    for (const { postId, message, from, createdTime } of posts) {
       try {
         // Create post record (idempotent)
         const { created } = await getOrCreatePost(postId);
         
         if (created) {
-          // Enqueue processing job
+          // Enqueue processing job with webhook data for fallback
           // Use post_id as singleton key for dedupe
           await boss.send(
             PROCESS_POST_QUEUE,
-            { fbPostId: postId, correlationId },
+            { 
+              fbPostId: postId, 
+              correlationId,
+              // Include webhook data for fallback if Graph API unavailable
+              webhookData: { message, from, createdTime },
+            },
             { singletonKey: postId }
           );
-          reqLog.info({ postId }, 'Enqueued post for processing');
+          reqLog.info({ postId, hasMessage: !!message }, 'Enqueued post for processing');
         } else {
           reqLog.debug({ postId }, 'Post already exists, skipping enqueue');
         }
@@ -162,7 +179,7 @@ export async function metaWebhookRoutes(app: FastifyInstance) {
     }
 
     const latency = Date.now() - startTime;
-    reqLog.info({ postCount: postIds.length, latencyMs: latency }, 'Webhook processed');
+    reqLog.info({ postCount: posts.length, latencyMs: latency }, 'Webhook processed');
 
     // Always return 200 quickly
     return reply.status(200).send('OK');

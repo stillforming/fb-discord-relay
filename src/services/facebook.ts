@@ -55,7 +55,7 @@ export async function fetchPost(postId: string): Promise<FetchPostResult> {
       },
     });
 
-    const data = await response.json();
+    const data = await response.json() as FacebookPost & { error?: { code?: number; message?: string } };
 
     if (!response.ok) {
       const error = data.error;
@@ -109,7 +109,7 @@ export async function verifyPageAccess(): Promise<boolean> {
 
   try {
     const response = await fetch(url.toString());
-    const data = await response.json();
+    const data = await response.json() as { id?: string; name?: string; error?: unknown };
 
     if (!response.ok) {
       log.error({ error: data.error }, 'Failed to verify page access');

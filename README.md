@@ -103,6 +103,7 @@ npm run subscribe -- --verify
 | `DISCORD_WEBHOOK_URL` | Discord webhook URL | — |
 | `DISCORD_WEBHOOK_WAIT` | Wait for message ID from Discord | `true` |
 | `DISCORD_DISCLAIMER` | Disclaimer text below alerts | `Not financial advice...` |
+| `DISCORD_MENTION_ROLE_ID` | Role ID to mention on each alert | — |
 | `ALERTS_ENABLED` | Kill switch for alerts | `true` |
 | `TRIGGER_TAG` | Tag required in posts | `#discord` |
 | `DATABASE_URL` | PostgreSQL connection string | — |
