@@ -23,6 +23,10 @@ async function main() {
   await boss.start();
   log.info('pg-boss started');
 
+  // Create queue (required in pg-boss 10+)
+  await boss.createQueue('process-post');
+  log.info('Queue created: process-post');
+
   // Create Fastify server
   const app = Fastify({
     logger: false, // We use pino directly
