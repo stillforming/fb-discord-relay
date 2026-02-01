@@ -1,0 +1,90 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Post processing state machine
+/// States: received → fetching → eligible → sending → delivered
+/// Terminal: ignored (no tag), failed (hard fail), needs_review (ambiguous delivery)
+enum PostStatus {
+  received      // Webhook received, job enqueued
+  fetching      // Worker fetching from Graph API
+  eligible      // Post has trigger tag, ready to send
+  ignored       // No trigger tag, terminal state
+  sending       // Sending to Discord
+  delivered     // Successfully sent, terminal state
+  failed        // Hard failure, terminal state
+  needs_review  // Ambiguous delivery (timeout after send), needs manual check
+}
+
+/// Tracks each Facebook post through the delivery pipeline
+model Post {
+  id              String      @id @default(cuid())
+  fbPostId        String      @unique @map("fb_post_id")
+  
+  // State machine
+  status          PostStatus  @default(received)
+  
+  // Metadata from Facebook (populated after fetch)
+  authorId        String?     @map("author_id")
+  authorName      String?     @map("author_name")
+  message         String?
+  permalink       String?
+  createdAt       DateTime?   @map("fb_created_at")
+  
+  // Delivery tracking
+  discordMsgId    String?     @map("discord_msg_id")
+  deliveredAt     DateTime?   @map("delivered_at")
+  
+  // Error tracking
+  lastError       String?     @map("last_error")
+  retryCount      Int         @default(0) @map("retry_count")
+  
+  // Timestamps
+  receivedAt      DateTime    @default(now()) @map("received_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+  
+  // Audit trail
+  events          PostEvent[]
+  
+  @@index([status])
+  @@index([receivedAt])
+  @@map("posts")
+}
+
+/// Audit log for post state transitions and events
+model PostEvent {
+  id          String    @id @default(cuid())
+  post        Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
+  postId      String    @map("post_id")
+  
+  event       String    // e.g., "webhook_received", "fetch_started", "fetch_failed", "discord_sent"
+  details     Json?     // Additional context
+  
+  createdAt   DateTime  @default(now()) @map("created_at")
+  
+  @@index([postId])
+  @@index([createdAt])
+  @@map("post_events")
+}
+
+/// Delivery log for operational monitoring
+model DeliveryLog {
+  id            String    @id @default(cuid())
+  fbPostId      String    @map("fb_post_id")
+  
+  success       Boolean
+  discordMsgId  String?   @map("discord_msg_id")
+  errorMessage  String?   @map("error_message")
+  latencyMs     Int?      @map("latency_ms")
+  
+  createdAt     DateTime  @default(now()) @map("created_at")
+  
+  @@index([createdAt])
+  @@index([success])
+  @@map("delivery_logs")
+}

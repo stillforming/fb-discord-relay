@@ -1,0 +1,22 @@
+# Example Caddyfile for automatic HTTPS
+# Copy to Caddyfile and update domain
+
+your-domain.com {
+    # Reverse proxy to ingress service
+    reverse_proxy ingress:3000
+
+    # Optional: Basic logging
+    log {
+        output file /var/log/caddy/access.log
+        format json
+    }
+
+    # Optional: Rate limiting (requires caddy-ratelimit plugin)
+    # rate_limit {
+    #     zone fb_webhook {
+    #         key {remote_host}
+    #         events 100
+    #         window 1m
+    #     }
+    # }
+}
