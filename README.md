@@ -97,7 +97,7 @@ npm run subscribe -- --verify
 | `PUBLIC_BASE_URL` | Public URL for debugging links | — |
 | `META_VERIFY_TOKEN` | Random string for webhook verification | — |
 | `META_APP_SECRET` | Facebook App secret (for signature verification) | — |
-| `META_GRAPH_VERSION` | Graph API version | `v21.0` |
+| `META_GRAPH_VERSION` | Graph API version | `v24.0` |
 | `META_PAGE_ID` | Facebook Page ID | — |
 | `META_PAGE_ACCESS_TOKEN` | Page access token with required permissions | — |
 | `DISCORD_WEBHOOK_URL` | Discord webhook URL | — |

@@ -12,7 +12,7 @@ const envSchema = z.object({
   // Meta / Facebook
   META_VERIFY_TOKEN: z.string().min(1),
   META_APP_SECRET: z.string().min(1),
-  META_GRAPH_VERSION: z.string().default('v21.0'),
+  META_GRAPH_VERSION: z.string().default('v24.0'),
   META_PAGE_ID: z.string().min(1),
   META_PAGE_ACCESS_TOKEN: z.string().min(1),
 
