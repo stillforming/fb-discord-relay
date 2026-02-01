@@ -2,12 +2,16 @@ import { config } from '../config.js';
 
 /**
  * Check if a message contains the trigger tag (case-insensitive)
+ * Uses word boundary to avoid matching #discord-like when looking for #discord
  */
 export function hasTag(message: string | null | undefined): boolean {
   if (!message) {
     return false;
   }
-  return message.toLowerCase().includes(config.TRIGGER_TAG.toLowerCase());
+  // Escape special regex chars and add word boundary at end
+  const escaped = config.TRIGGER_TAG.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(escaped + '(?![\\w-])', 'i');
+  return pattern.test(message);
 }
 
 /**
