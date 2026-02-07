@@ -31,6 +31,9 @@ const envSchema = z.object({
     .transform((v) => v === 'true')
     .default('true'),
   TRIGGER_TAG: z.string().default('#discord'),
+  
+  // Post age filter - ignore posts older than this many minutes (0 = disabled)
+  MAX_POST_AGE_MINUTES: z.coerce.number().default(30),
 
   // Database
   DATABASE_URL: z.string().min(1),

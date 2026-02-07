@@ -39,6 +39,34 @@ interface WebhookPayload {
   entry: WebhookEntry[];
 }
 
+/**
+ * Check if a post is too old based on MAX_POST_AGE_MINUTES config
+ * Returns true if the post should be skipped
+ */
+function isPostTooOld(createdTime: number | undefined, reqLog: ReturnType<typeof createRequestLogger>): boolean {
+  // If age filtering is disabled (0), allow all posts
+  if (config.MAX_POST_AGE_MINUTES === 0) {
+    return false;
+  }
+
+  // If no created_time, we can't determine age - allow it through
+  if (!createdTime) {
+    reqLog.debug('No created_time in webhook, allowing post');
+    return false;
+  }
+
+  const postAgeMs = Date.now() - (createdTime * 1000);
+  const maxAgeMs = config.MAX_POST_AGE_MINUTES * 60 * 1000;
+  
+  if (postAgeMs > maxAgeMs) {
+    const ageMinutes = Math.round(postAgeMs / 60000);
+    reqLog.info({ ageMinutes, maxMinutes: config.MAX_POST_AGE_MINUTES }, 'Post too old, ignoring');
+    return true;
+  }
+  
+  return false;
+}
+
 export async function metaWebhookRoutes(app: FastifyInstance) {
   /**
    * GET /meta/webhook - Verification handshake
@@ -137,6 +165,12 @@ export async function metaWebhookRoutes(app: FastifyInstance) {
         // Must have post_id
         if (!value.post_id) {
           reqLog.warn({ value }, 'Missing post_id in feed change');
+          continue;
+        }
+
+        // Check if post is too old
+        if (isPostTooOld(value.created_time, reqLog)) {
+          reqLog.info({ postId: value.post_id }, 'Skipping old post');
           continue;
         }
 
