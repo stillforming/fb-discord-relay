@@ -32,15 +32,29 @@ export function stripTag(message: string): string {
 }
 
 /**
+ * Strip all hashtags from a message
+ * Hashtags are Facebook-native and do not serve a purpose on Discord
+ */
+export function stripAllHashtags(message: string): string {
+  return message
+    .replace(/#\w+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
  * Sanitize message for Discord
  * - Strip trigger tag
- * - Escape Discord formatting if needed
+ * - Strip all hashtags (they do not serve a purpose on Discord)
  * - Truncate to safe length
  */
 export function sanitizeForDiscord(message: string, maxLength = 4000): string {
   let cleaned = stripTag(message);
 
-  // Truncate if too long (leave room for "..." indicator)
+  // Strip all hashtags - they are Facebook-native and just noise on Discord
+  cleaned = stripAllHashtags(cleaned);
+
+  // Truncate if too long (leave room for ... indicator)
   if (cleaned.length > maxLength) {
     cleaned = cleaned.slice(0, maxLength - 3) + '...';
   }
