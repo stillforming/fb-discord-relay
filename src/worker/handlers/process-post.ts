@@ -9,7 +9,7 @@ import {
   PostStatus,
   prisma,
 } from '../../services/post-state.js';
-import { hasTag } from '../../utils/tag-parser.js';
+import { hasAnyTrackedTag } from '../../utils/tag-parser.js';
 
 interface WebhookData {
   message?: string;
@@ -58,7 +58,7 @@ export async function processPost(fbPostId: string, log: Logger, webhookData?: W
   if (!fetchResult.success) {
     log.warn({ fbPostId, error: fetchResult.error }, 'Failed to fetch post from Graph API');
 
-    // If we have webhook data, use it as fallback (useful for testing and resilience)
+    // If we have webhook data, use it as fallback
     if (webhookData?.message) {
       log.info({ fbPostId }, 'Using webhook data as fallback');
       fbPost = {
@@ -70,7 +70,6 @@ export async function processPost(fbPostId: string, log: Logger, webhookData?: W
           : undefined,
       };
     } else {
-      // No fallback available
       if (fetchResult.retryable) {
         await markForRetry(fbPostId, fetchResult.error || 'Fetch failed');
         throw new Error(`Retryable fetch error: ${fetchResult.error}`);
@@ -98,15 +97,16 @@ export async function processPost(fbPostId: string, log: Logger, webhookData?: W
   });
 
   // === CHECK TAG ===
-  if (!hasTag(fbPost.message)) {
-    log.info({ fbPostId }, 'No trigger tag found, ignoring');
+  // Now checks for ANY tracked tag (trigger tag OR routed channel tags)
+  if (!hasAnyTrackedTag(fbPost.message)) {
+    log.info({ fbPostId }, 'No tracked hashtag found, ignoring');
     await transitionPost(fbPostId, PostStatus.ignored, undefined, {
-      reason: 'No trigger tag',
+      reason: 'No tracked hashtag',
     });
     return;
   }
 
-  log.info({ fbPostId }, 'Trigger tag found, post is eligible');
+  log.info({ fbPostId }, 'Tracked hashtag found, post is eligible');
   await transitionPost(fbPostId, PostStatus.eligible);
 
   // === SEND ===
@@ -132,16 +132,14 @@ export async function processPost(fbPostId: string, log: Logger, webhookData?: W
         discordMsgId: sendResult.messageId,
         deliveredAt: new Date(),
       },
-      { messageId: sendResult.messageId, latencyMs }
+      { messageId: sendResult.messageId, latencyMs, channel: sendResult.channel }
     );
-    log.info({ fbPostId, messageId: sendResult.messageId, latencyMs }, '✅ Post delivered');
+    log.info({ fbPostId, messageId: sendResult.messageId, latencyMs, channel: sendResult.channel }, '✅ Post delivered');
     return;
   }
 
   // Handle send failure
   if (sendResult.ambiguous) {
-    // This is the dangerous case - we don't know if Discord received it
-    // Mark for manual review to avoid duplicate alerts
     await transitionPost(
       fbPostId,
       PostStatus.needs_review,
@@ -155,7 +153,6 @@ export async function processPost(fbPostId: string, log: Logger, webhookData?: W
   if (sendResult.retryable) {
     await markForRetry(fbPostId, sendResult.error || 'Send failed');
 
-    // If rate limited, throw with delay hint
     if (sendResult.retryAfterMs) {
       log.warn({ fbPostId, retryAfterMs: sendResult.retryAfterMs }, 'Rate limited, will retry');
     }

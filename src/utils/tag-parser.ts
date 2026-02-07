@@ -1,4 +1,4 @@
-import { config } from '../config.js';
+import { config, getChannelRoutes, getChannelPriority } from '../config.js';
 
 /**
  * Check if a message contains the trigger tag (case-insensitive)
@@ -9,9 +9,59 @@ export function hasTag(message: string | null | undefined): boolean {
     return false;
   }
   // Escape special regex chars and add word boundary at end
-  const escaped = config.TRIGGER_TAG.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const escaped = config.TRIGGER_TAG.replace(/[.*+?${}()|[\]\\]/g, '\\\$&');
   const pattern = new RegExp(escaped + '(?![\\w-])', 'i');
   return pattern.test(message);
+}
+
+/**
+ * Check if a message contains ANY of the routable hashtags or the trigger tag
+ */
+export function hasAnyTrackedTag(message: string | null | undefined): boolean {
+  if (!message) {
+    return false;
+  }
+  
+  // Check trigger tag first
+  if (hasTag(message)) {
+    return true;
+  }
+  
+  // Check channel route tags
+  const routes = getChannelRoutes();
+  const msgLower = message.toLowerCase();
+  
+  for (const tag of routes.keys()) {
+    // Simple case-insensitive substring match for hashtags
+    if (msgLower.includes(tag)) {
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+/**
+ * Find the highest priority matching hashtag in a message
+ * Returns the hashtag (lowercase) and its webhook URL, or null if no match
+ */
+export function findRoutedChannel(message: string | null | undefined): { tag: string; webhookUrl: string } | null {
+  if (!message) {
+    return null;
+  }
+  
+  const routes = getChannelRoutes();
+  const priority = getChannelPriority();
+  const msgLower = message.toLowerCase();
+  
+  // Check in priority order
+  for (const tag of priority) {
+    if (msgLower.includes(tag) && routes.has(tag)) {
+      return { tag, webhookUrl: routes.get(tag)! };
+    }
+  }
+  
+  return null;
 }
 
 /**
@@ -21,7 +71,7 @@ export function hasTag(message: string | null | undefined): boolean {
 export function stripTag(message: string): string {
   const tagPattern = new RegExp(
     // Escape special regex chars in the tag
-    config.TRIGGER_TAG.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+    config.TRIGGER_TAG.replace(/[.*+?${}()|[\]\\]/g, '\\\$&'),
     'gi'
   );
 

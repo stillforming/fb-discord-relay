@@ -1,6 +1,6 @@
 import { config } from '../config.js';
 import { logger } from '../logger.js';
-import { sanitizeForDiscord } from '../utils/tag-parser.js';
+import { sanitizeForDiscord, findRoutedChannel, hasTag } from '../utils/tag-parser.js';
 import type { FacebookPost } from './facebook.js';
 
 const log = logger.child({ service: 'discord' });
@@ -34,17 +34,18 @@ export interface SendResult {
   error?: string;
   retryable?: boolean;
   retryAfterMs?: number;
-  ambiguous?: boolean; // True if we sent but got timeout (delivery unknown)
+  ambiguous?: boolean;
+  channel?: string; // Which channel it was sent to
 }
 
 /**
  * Build a Discord embed from a Facebook post
  */
-export function buildEmbed(post: FacebookPost): DiscordEmbed {
+export function buildEmbed(post: FacebookPost, title = '📈 TRADE ALERT'): DiscordEmbed {
   const message = post.message ? sanitizeForDiscord(post.message) : 'New post (no text content)';
 
   const embed: DiscordEmbed = {
-    title: '📈 TRADE ALERT',
+    title,
     description: message,
     color: 0x1877f2, // Facebook blue
   };
@@ -74,16 +75,43 @@ export function buildEmbed(post: FacebookPost): DiscordEmbed {
 }
 
 /**
+ * Determine which webhook URL to use based on post content
+ * Returns the webhook URL and a label for logging
+ */
+export function resolveWebhook(post: FacebookPost): { url: string; label: string; title: string } {
+  const message = post.message || '';
+  
+  // Check for routed channels first (by priority)
+  const routed = findRoutedChannel(message);
+  if (routed) {
+    // Determine title based on channel
+    let title = '📈 TRADE ALERT';
+    if (routed.tag === '#stockmarketnews') {
+      title = '📰 STOCK MARKET NEWS';
+    } else if (routed.tag === '#stockstowatch') {
+      title = '👀 STOCKS TO WATCH';
+    }
+    
+    log.info({ postId: post.id, routedTag: routed.tag }, 'Routing to channel-specific webhook');
+    return { url: routed.webhookUrl, label: routed.tag, title };
+  }
+  
+  // Fall back to default webhook (for #nofomo or other trigger tag)
+  return { url: config.DISCORD_WEBHOOK_URL, label: 'default', title: '📈 TRADE ALERT' };
+}
+
+/**
  * Send a Facebook post to Discord via webhook
  */
 export async function sendToDiscord(post: FacebookPost): Promise<SendResult> {
-  const embed = buildEmbed(post);
+  const { url: webhookUrl, label: channelLabel, title } = resolveWebhook(post);
+  const embed = buildEmbed(post, title);
 
   // Build content with optional role mention and disclaimer
   const contentParts: string[] = [];
   
-  // Add role mention if configured
-  if (config.DISCORD_MENTION_ROLE_ID) {
+  // Add role mention if configured (only for default channel)
+  if (channelLabel === 'default' && config.DISCORD_MENTION_ROLE_ID) {
     contentParts.push(`<@&${config.DISCORD_MENTION_ROLE_ID}>`);
   }
   
@@ -105,15 +133,15 @@ export async function sendToDiscord(post: FacebookPost): Promise<SendResult> {
   }
 
   // Build URL with wait parameter for message ID
-  const url = new URL(config.DISCORD_WEBHOOK_URL);
+  const url = new URL(webhookUrl);
   if (config.DISCORD_WEBHOOK_WAIT) {
     url.searchParams.set('wait', 'true');
   }
 
-  log.debug({ postId: post.id }, 'Sending to Discord webhook');
+  log.debug({ postId: post.id, channel: channelLabel }, 'Sending to Discord webhook');
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000); // 30s timeout
+  const timeout = setTimeout(() => controller.abort(), 30000);
 
   try {
     const response = await fetch(url.toString(), {
@@ -127,30 +155,30 @@ export async function sendToDiscord(post: FacebookPost): Promise<SendResult> {
 
     clearTimeout(timeout);
 
-    // Handle rate limits
     if (response.status === 429) {
       const retryAfter = response.headers.get('retry-after');
       const retryAfterMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 5000;
-      log.warn({ postId: post.id, retryAfterMs }, 'Discord rate limited');
+      log.warn({ postId: post.id, retryAfterMs, channel: channelLabel }, 'Discord rate limited');
       return {
         success: false,
         error: 'Rate limited',
         retryable: true,
         retryAfterMs,
+        channel: channelLabel,
       };
     }
 
     if (!response.ok) {
       const error = await response.text();
-      log.error({ postId: post.id, status: response.status, error }, 'Discord webhook error');
+      log.error({ postId: post.id, status: response.status, error, channel: channelLabel }, 'Discord webhook error');
       return {
         success: false,
         error: `HTTP ${response.status}: ${error}`,
         retryable: response.status >= 500,
+        channel: channelLabel,
       };
     }
 
-    // Get message ID from response (only if wait=true)
     let messageId: string | undefined;
     if (config.DISCORD_WEBHOOK_WAIT) {
       try {
@@ -161,32 +189,33 @@ export async function sendToDiscord(post: FacebookPost): Promise<SendResult> {
       }
     }
 
-    log.info({ postId: post.id, messageId }, 'Successfully sent to Discord');
+    log.info({ postId: post.id, messageId, channel: channelLabel }, 'Successfully sent to Discord');
 
     return {
       success: true,
       messageId,
+      channel: channelLabel,
     };
   } catch (err) {
     clearTimeout(timeout);
 
-    // Check if this was a timeout after the request was sent
-    // This is the ambiguous case - we don't know if Discord received it
     if (err instanceof Error && err.name === 'AbortError') {
-      log.error({ postId: post.id }, 'Discord request timed out - delivery status unknown');
+      log.error({ postId: post.id, channel: channelLabel }, 'Discord request timed out - delivery status unknown');
       return {
         success: false,
         error: 'Request timed out - delivery status unknown',
         retryable: false,
         ambiguous: true,
+        channel: channelLabel,
       };
     }
 
-    log.error({ postId: post.id, error: err }, 'Network error sending to Discord');
+    log.error({ postId: post.id, error: err, channel: channelLabel }, 'Network error sending to Discord');
     return {
       success: false,
       error: err instanceof Error ? err.message : 'Unknown network error',
       retryable: true,
+      channel: channelLabel,
     };
   }
 }
@@ -196,7 +225,6 @@ export async function sendToDiscord(post: FacebookPost): Promise<SendResult> {
  */
 export async function testWebhook(): Promise<boolean> {
   try {
-    // Just do a GET to verify the webhook exists
     const response = await fetch(config.DISCORD_WEBHOOK_URL);
 
     if (!response.ok) {
