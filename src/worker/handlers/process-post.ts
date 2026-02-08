@@ -18,11 +18,40 @@ interface WebhookData {
 }
 
 /**
+ * Check if a post is too old based on its created_time
+ * Returns true if the post should be skipped
+ */
+function isPostTooOld(createdTime: string | undefined, log: Logger): boolean {
+  // If age filtering is disabled (0), allow all posts
+  if (config.MAX_POST_AGE_MINUTES === 0) {
+    return false;
+  }
+
+  // If no created_time, we can't determine age - reject to be safe
+  if (!createdTime) {
+    log.warn('No created_time available, rejecting post to be safe');
+    return true;
+  }
+
+  const postDate = new Date(createdTime);
+  const postAgeMs = Date.now() - postDate.getTime();
+  const maxAgeMs = config.MAX_POST_AGE_MINUTES * 60 * 1000;
+  
+  if (postAgeMs > maxAgeMs) {
+    const ageMinutes = Math.round(postAgeMs / 60000);
+    log.info({ ageMinutes, maxMinutes: config.MAX_POST_AGE_MINUTES }, 'Post too old, ignoring');
+    return true;
+  }
+  
+  return false;
+}
+
+/**
  * Process a Facebook post through the delivery pipeline
  * 
  * State machine:
  *   received → fetching → eligible → sending → delivered
- *                      ↘ ignored (no tag)
+ *                      ↘ ignored (no tag or too old)
  *                               ↘ failed / needs_review
  */
 export async function processPost(fbPostId: string, log: Logger, webhookData?: WebhookData): Promise<void> {
@@ -95,6 +124,15 @@ export async function processPost(fbPostId: string, log: Logger, webhookData?: W
       createdAt: fbPost.created_time ? new Date(fbPost.created_time) : undefined,
     },
   });
+
+  // === CHECK AGE (after fetch, using accurate created_time) ===
+  if (isPostTooOld(fbPost.created_time, log)) {
+    log.info({ fbPostId }, 'Post too old after fetch verification, ignoring');
+    await transitionPost(fbPostId, PostStatus.ignored, undefined, {
+      reason: 'Post too old',
+    });
+    return;
+  }
 
   // === CHECK TAG ===
   // Now checks for ANY tracked tag (trigger tag OR routed channel tags)
